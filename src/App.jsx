@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from '@tauri-apps/plugin-dialog';
 import { LineChart, Line, BarChart, Bar, XAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { LayoutDashboard, FileText, Activity, AlertCircle, Settings, Search, Sun, Moon } from 'lucide-react';
+import { LayoutDashboard, FileText, Activity, AlertCircle, Settings } from 'lucide-react';
 import "./App.css";
 
 const COLORS = {
@@ -15,28 +15,17 @@ const COLORS = {
   accent_pink: "#ff4081",
 };
 
-// Mock Data
-const MOCK_LINE_DATA = Array.from({ length: 20 }, (_, i) => ({
-  name: i,
-  value: Math.floor(Math.random() * 80) + 10
-}));
-
-const MOCK_BAR_DATA = [
-  { name: 'GET', value: 400 },
-  { name: 'POST', value: 300 },
-  { name: 'PUT', value: 300 },
-  { name: 'DEL', value: 200 },
-];
-
 function App() {
   const [events, setEvents] = useState([]);
+  const [totalLines, setTotalLines] = useState(0);
   const [chartData, setChartData] = useState({ line: [], bar: [] });
   const [stats, setStats] = useState({ total: 0, errors: 0 });
   const [currentFile, setCurrentFile] = useState("");
   const [activeTab, setActiveTab] = useState("dashboards");
+  const [scrubPercent, setScrubPercent] = useState(0);
 
   useEffect(() => {
-    // Initial load with default (dummy internal logic if empty string)
+    // Initial load
     fetchEvents("");
   }, []);
 
@@ -62,44 +51,46 @@ function App() {
 
   async function fetchEvents(path) {
     try {
-      const evs = await invoke("get_events", { filePath: path || "" });
-      processEvents(evs);
+      const data = await invoke("get_events", { filePath: path || "" });
+      processEvents(data);
     } catch (e) {
       console.warn("Backend error or not ready:", e);
       // Fallback mocks
-      const mocks = [
-        { time: "10:00:01", level: "ERROR", message: "Database connection failed unexpectedly." },
-        { time: "10:05:23", level: "WARN", message: "High latency detected on node-3." },
-        { time: "10:12:44", level: "INFO", message: "User login successful." },
-        { time: "10:15:00", level: "ERROR", message: "Payment gateway timeout." }
-      ];
-      // Generate more mock data for visualization
+      const mockEvents = [];
       for (let i = 0; i < 50; i++) {
-        mocks.push({
+        mockEvents.push({
+          line_number: i * 20,
           time: `10:${16 + i}:00`,
           level: Math.random() > 0.8 ? "ERROR" : "INFO",
           message: "Regular system activity"
         });
       }
-      processEvents(mocks);
+      processEvents({
+        total_lines: 1200,
+        events: mockEvents
+      });
     }
   }
 
-  function processEvents(evs) {
+  function processEvents(data) {
+    const evs = data.events || [];
+    const total = data.total_lines || 1000;
+
     setEvents(evs);
+    setTotalLines(total);
 
     // 1. Calc Stats
     const errCount = evs.filter(e => e.level === 'ERROR' || e.level === 'ERR').length;
     setStats({ total: evs.length, errors: errCount });
 
-    // 2. Prep Bar Data (Counts by Level)
+    // 2. Prep Bar Data
     const levelCounts = evs.reduce((acc, curr) => {
       acc[curr.level] = (acc[curr.level] || 0) + 1;
       return acc;
     }, {});
     const barData = Object.keys(levelCounts).map(k => ({ name: k, value: levelCounts[k] }));
 
-    // 3. Prep Line Data (Activity over time - simplified to index for now)
+    // 3. Prep Line Data
     const bucketSize = Math.ceil(evs.length / 20);
     const lineData = [];
     for (let i = 0; i < evs.length; i += bucketSize) {
@@ -116,12 +107,42 @@ function App() {
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
+  const handleScrub = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const percent = Math.max(0, Math.min(1, x / rect.width));
+
+    setScrubPercent(percent);
+
+    const targetLine = Math.floor(percent * totalLines);
+
+    let closestIndex = -1;
+    let minDiff = Infinity;
+
+    events.forEach((ev, i) => {
+      const diff = Math.abs(ev.line_number - targetLine);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestIndex = i;
+      }
+    });
+
+    if (closestIndex !== -1) {
+      scrollToIntoView(closestIndex);
+    }
+  };
+
+  const handleMouseMove = (e) => {
+    if (e.buttons === 1) {
+      handleScrub(e);
+    }
+  }
+
   const renderContent = () => {
     switch (activeTab) {
       case "dashboards":
         return (
           <div className="grid-layout">
-            {/* Row 1 */}
             <div className="card">
               <h3>Log Level Distribution</h3>
               <div style={{ width: '100%', height: 150 }}>
@@ -148,7 +169,6 @@ function App() {
               </div>
             </div>
 
-            {/* Row 2 */}
             <div className="stat-group">
               <div className="card stat">
                 <h3>Total Events</h3>
@@ -162,19 +182,31 @@ function App() {
 
             <div className="card" style={{ gridColumn: "span 2" }}>
               <h3>Timeline Scrubber</h3>
-              <div className="scrubber-container">
+              <div
+                className="scrubber-container"
+                onMouseDown={handleScrub}
+                onMouseMove={handleMouseMove}
+              >
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: `${scrubPercent * 100}%`,
+                    top: 0,
+                    bottom: 0,
+                    width: '2px',
+                    backgroundColor: '#fff',
+                    zIndex: 20,
+                    pointerEvents: 'none',
+                    boxShadow: '0 0 5px rgba(255,255,255,0.5)'
+                  }}
+                />
                 {events.map((ev, i) => (
                   <div
                     key={i}
                     className={`scrubber-rune ${ev.level}`}
-                    onClick={() => {
-                      scrollToIntoView(i);
-                      // If we are in 'dashboards', we might not see the list unless we look at the right panel.
-                      // But the right panel is always there.
-                    }}
                     title={`${ev.time} - ${ev.level}`}
                     style={{
-                      left: `${(i / events.length) * 100}%`,
+                      left: `${(ev.line_number / totalLines) * 100}%`,
                       backgroundColor: ev.level === 'ERROR' ? COLORS.accent_pink :
                         ev.level === 'WARN' ? '#ff9800' :
                           'rgba(255,255,255,0.1)'
@@ -188,11 +220,12 @@ function App() {
       case "logs":
         return (
           <div className="card" style={{ height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-            <h3>Full Log View</h3>
+            <h3>Full Log View ({totalLines} lines)</h3>
             <div className="table-container" style={{ flex: 1, overflowY: 'auto' }}>
               <table>
                 <thead>
                   <tr>
+                    <th>Line</th>
                     <th>Time</th>
                     <th>Level</th>
                     <th>Message</th>
@@ -201,6 +234,7 @@ function App() {
                 <tbody>
                   {events.map((ev, i) => (
                     <tr key={i} id={`log-row-${i}`}>
+                      <td style={{ color: COLORS.text_dim, width: '50px' }}>{ev.line_number}</td>
                       <td style={{ whiteSpace: 'nowrap', width: '100px', color: COLORS.text_dim }}>{ev.time}</td>
                       <td style={{ width: '80px' }}>
                         <span className={`tag ${ev.level}`}>{ev.level}</span>
@@ -234,9 +268,8 @@ function App() {
 
   return (
     <div className="app-container">
-      {/* 1. SIDEBAR */}
       <aside className="sidebar">
-        <div className="logo">RUNE v4.1</div>
+        <div className="logo">RUNE v4.2</div>
         <nav>
           <div
             className={`nav-item ${activeTab === 'logs' ? 'active' : ''}`}
@@ -271,7 +304,6 @@ function App() {
         </nav>
       </aside>
 
-      {/* 2. MAIN DASHBOARD CONTENT (Dynamic) */}
       <main className="dashboard">
         <header className="top-bar">
           <h2>
@@ -288,7 +320,6 @@ function App() {
         {renderContent()}
       </main>
 
-      {/* 3. RIGHT TIMELINE (Always Visible) */}
       <aside className="timeline">
         <div className="timeline-header">Event Log</div>
         <div className="events-list">

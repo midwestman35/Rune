@@ -5,15 +5,22 @@ use tauri::Manager;
 
 #[derive(Serialize)]
 struct LogEvent {
+    line_number: usize,
     time: String,
     level: String,
     message: String,
 }
 
+#[derive(Serialize)]
+struct LogData {
+    total_lines: usize,
+    events: Vec<LogEvent>,
+}
+
 const KEYWORDS: &[&str] = &["ERROR", "ERR", "MEDIA_TIMEOUT", "AbandonedCall", "Warning"];
 
 #[tauri::command]
-fn get_events(file_path: String) -> Vec<LogEvent> {
+fn get_events(file_path: String) -> LogData {
     let mut content = String::new();
     let mut found = false;
 
@@ -51,15 +58,20 @@ fn get_events(file_path: String) -> Vec<LogEvent> {
 
     if !found {
         println!("Could not find any logs.");
-        return vec![
-            LogEvent { time: "00:00:00".into(), level: "INFO".into(), message: "No log file loaded.".into() },
-            LogEvent { time: "00:00:01".into(), level: "INFO".into(), message: "Click 'Open Log...' to select a file.".into() },
-        ];
+        return LogData {
+            total_lines: 2,
+            events: vec![
+                LogEvent { line_number: 1, time: "00:00:00".into(), level: "INFO".into(), message: "No log file loaded.".into() },
+                LogEvent { line_number: 2, time: "00:00:01".into(), level: "INFO".into(), message: "Click 'Open Log...' to select a file.".into() },
+            ],
+        };
     }
 
     let mut events = Vec::new();
+    let lines: Vec<&str> = content.lines().collect();
+    let total_lines = lines.len();
 
-    for line in content.lines() {
+    for (i, line) in lines.iter().enumerate() {
         // Simple parsing: split by space, check for keywords
         // Format: Date Time Level Message...
         // e.g. "2023-10-27 10:00:01 ERROR Database connection..."
@@ -88,6 +100,7 @@ fn get_events(file_path: String) -> Vec<LogEvent> {
             // Reconstruct message from parts (skipping date and time)
             let message = parts[2..].join(" ");
             events.push(LogEvent {
+                line_number: i + 1, // 1-based index for display
                 time: time.to_string(),
                 level,
                 message,
@@ -95,7 +108,10 @@ fn get_events(file_path: String) -> Vec<LogEvent> {
         }
     }
 
-    events
+    LogData {
+        total_lines,
+        events,
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
