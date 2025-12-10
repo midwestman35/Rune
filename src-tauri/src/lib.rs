@@ -13,37 +13,47 @@ struct LogEvent {
 const KEYWORDS: &[&str] = &["ERROR", "ERR", "MEDIA_TIMEOUT", "AbandonedCall", "Warning"];
 
 #[tauri::command]
-fn get_events() -> Vec<LogEvent> {
-    // Try to find the dummy_logs directory relative to where we are running
-    // We expect to be in rune_v4 or rune_v4/src-tauri
-    // Let's look for the file in a few probable locations
-    let possible_paths = [
-        "../dummy_logs/server_errors.log",
-        "../../dummy_logs/server_errors.log",
-        "dummy_logs/server_errors.log",
-        "Rune/dummy_logs/server_errors.log"
-    ];
-
+fn get_events(file_path: String) -> Vec<LogEvent> {
     let mut content = String::new();
     let mut found = false;
 
-    for p in possible_paths {
-        if Path::new(p).exists() {
-            if let Ok(c) = fs::read_to_string(p) {
-                content = c;
-                println!("Loaded logs from: {}", p);
-                found = true;
-                break;
+    // 1. Try supplied path
+    if !file_path.is_empty() {
+        if let Ok(c) = fs::read_to_string(&file_path) {
+            content = c;
+            println!("Loaded logs from: {}", file_path);
+            found = true;
+        } else {
+            println!("Failed to read provided path: {}", file_path);
+        }
+    }
+
+    // 2. Fallback to dummy logs if no path provided or load failed
+    if !found {
+        let possible_paths = [
+            "../dummy_logs/server_errors.log",
+            "../../dummy_logs/server_errors.log",
+            "dummy_logs/server_errors.log",
+            "Rune/dummy_logs/server_errors.log"
+        ];
+
+        for p in possible_paths {
+            if Path::new(p).exists() {
+                if let Ok(c) = fs::read_to_string(p) {
+                    content = c;
+                    println!("Loaded logs from fallback: {}", p);
+                    found = true;
+                    break;
+                }
             }
         }
     }
 
     if !found {
-        println!("Could not find dummy logs in any expected path.");
-        // Return mock data if file not found, so UI doesn't look broken
+        println!("Could not find any logs.");
         return vec![
-            LogEvent { time: "00:00:00".into(), level: "INFO".into(), message: "Dummy logs not found, using internal mock.".into() },
-            LogEvent { time: "12:34:56".into(), level: "ERROR".into(), message: "Could not locate server_errors.log".into() },
+            LogEvent { time: "00:00:00".into(), level: "INFO".into(), message: "No log file loaded.".into() },
+            LogEvent { time: "00:00:01".into(), level: "INFO".into(), message: "Click 'Open Log...' to select a file.".into() },
         ];
     }
 
@@ -59,7 +69,7 @@ fn get_events() -> Vec<LogEvent> {
 
         let _date = parts[0];
         let time = parts[1];
-        let remainder = &parts[2..]; // Level and message
+        let _remainder = &parts[2..]; // Level and message
         let full_line = line;
 
         // Check for keywords
@@ -85,9 +95,6 @@ fn get_events() -> Vec<LogEvent> {
         }
     }
 
-    // Reverse to show newest first? Or sequential? 
-    // User asked for "sequential order" in the right-hand timeline feature for V3, 
-    // but often timelines are newest top. Let's keep file order (sequential) as requested.
     events
 }
 
@@ -95,6 +102,7 @@ fn get_events() -> Vec<LogEvent> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![get_events])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
